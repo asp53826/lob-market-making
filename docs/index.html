@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lob-market-making — quoting, and what it costs</title>
+<meta name="description" content="A live limit order book, informed traders picking off stale quotes, and the measurement showing the strategy with the best PnL is the worst one.">
+<style>
+:root{
+  --bg:#050814; --panel:#0a1020; --panel2:#0d1628; --line:#20314d;
+  --text:#f4f8ff; --muted:#8da2bf; --cyan:#4de7ff; --blue:#4f8cff;
+  --violet:#9b7bff; --amber:#ffcb66; --green:#68f5ae; --red:#ff647c;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f7fbff;--panel:#fff;--panel2:#eef5ff;--line:#c4d5ea;
+        --text:#0b1730;--muted:#526a88;--cyan:#007d9d;--blue:#145fe0;
+        --violet:#7048d7;--amber:#9b6400;--green:#087a4c;--red:#c83755;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+     line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+a{color:var(--cyan)}
+header{position:relative;overflow:hidden;border-bottom:1px solid var(--line);
+       background:linear-gradient(180deg,var(--panel2),var(--panel))}
+header .wrap{padding:62px 20px 50px;position:relative;z-index:2}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;
+         color:var(--muted);text-transform:uppercase}
+h1{font-size:clamp(29px,5vw,48px);line-height:1.08;margin:14px 0 8px;letter-spacing:-.02em}
+.sub{color:var(--muted);font-size:17px;max-width:62ch;margin:0 0 24px}
+.pills{display:flex;gap:10px;flex-wrap:wrap}
+.pill{font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:999px;
+      border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+.pill b{color:var(--text)}
+section{padding:54px 0;border-bottom:1px solid var(--line)}
+h2{font-size:clamp(21px,3vw,29px);margin:0 0 6px;letter-spacing:-.01em}
+.lede{color:var(--muted);max-width:72ch;margin:0 0 24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.split{display:grid;gap:18px;grid-template-columns:1fr}
+@media(min-width:900px){.split{grid-template-columns:1.5fr 1fr}}
+.ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.ctl label{font-family:var(--mono);font-size:12.5px;color:var(--muted);min-width:112px}
+input[type=range]{flex:1;min-width:150px;accent-color:var(--cyan);height:22px}
+.val{font-family:var(--mono);font-size:13.5px;color:var(--cyan);font-weight:700;
+     min-width:64px;text-align:right}
+button{font-family:var(--mono);font-size:12.5px;padding:8px 14px;border-radius:8px;
+       border:1px solid var(--line);background:var(--panel2);color:var(--text);
+       cursor:pointer;transition:border-color .18s}
+button:hover{border-color:var(--cyan)}
+button[aria-pressed=true]{border-color:var(--cyan);color:var(--cyan)}
+.stat{font-family:var(--mono);margin-bottom:14px}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.stat .v{font-size:23px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.good{color:var(--green)} .bad{color:var(--red)} .mid{color:var(--amber)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.07em}
+tbody tr:hover{background:var(--panel2)}
+tr.hl td{background:color-mix(in srgb,var(--cyan) 10%,transparent)}
+svg{display:block;width:100%;height:auto}
+.note{font-size:13.5px;color:var(--muted);margin-top:14px;max-width:76ch}
+.warn{border-left:3px solid var(--red);padding-left:15px}
+.win{border-left:3px solid var(--green);padding-left:15px}
+footer{padding:42px 0 60px;color:var(--muted);font-size:14px}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;
+     border:1px solid var(--line);color:var(--muted);vertical-align:middle}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">asp53826 / lob-market-making</div>
+    <h1>The best PnL<br>is the worst strategy.</h1>
+    <p class="sub">A limit order book, market makers quoting into it, and informed
+      traders who can see a fair value the makers cannot. Rank the strategies by
+      profit and the naive one wins. Rank them by anything that accounts for risk
+      and it is not close.</p>
+    <div class="pills">
+      <span class="pill">36 <b>tests</b></span>
+      <span class="pill">12 <b>paired seeds</b></span>
+      <span class="pill">naive holds <b>7&times;</b> the inventory risk</span>
+      <span class="pill">A-S was a taker on <b>72.7%</b> of volume</span>
+      <span class="pill"><a href="https://github.com/asp53826/lob-market-making">source</a></span>
+    </div>
+  </div>
+</header>
+
+<!-- ══ live book ═════════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>Watch it get picked off <span class="tag">LIVE</span></h2>
+    <p class="lede">The book below is running now. Faint green and red are resting
+      bids and asks from other liquidity providers; <b>cyan is this market maker's
+      own two quotes</b>. The dashed amber line is fair value —
+      <b>only the informed traders can see it</b>. When a quote drifts onto the
+      wrong side of that line they take it, the fill flashes red, and the maker's
+      realised edge on that trade is negative. Noise fills flash cyan.</p>
+
+    <div class="split">
+      <div class="card">
+        <div class="ctl">
+          <label for="hs">half-spread</label>
+          <input id="hs" type="range" min="1" max="10" value="2" step="1">
+          <span class="val" id="hsv">2</span>
+        </div>
+        <div class="ctl">
+          <label for="sk">inventory skew</label>
+          <input id="sk" type="range" min="0" max="0.12" value="0.03" step="0.005">
+          <span class="val" id="skv">0.030</span>
+        </div>
+        <div class="ctl">
+          <label for="inf">informed flow</label>
+          <input id="inf" type="range" min="0" max="1" value="0.18" step="0.02">
+          <span class="val" id="infv">0.18</span>
+        </div>
+        <div class="ctl" style="margin-top:4px">
+          <button id="play" aria-pressed="true">pause</button>
+          <button id="reset">reset</button>
+          <button id="naive" aria-pressed="false">skew off (naive)</button>
+        </div>
+        <svg id="book" viewBox="0 0 660 330" role="img"
+             aria-label="Live limit order book with market maker quotes and fair value"></svg>
+      </div>
+
+      <div class="card">
+        <div class="stat"><div class="k">inventory</div>
+          <div class="v" id="s-inv">0</div></div>
+        <div class="stat"><div class="k">PnL, marked to fair</div>
+          <div class="v" id="s-pnl">0</div></div>
+        <div class="stat"><div class="k">spread capture</div>
+          <div class="v good" id="s-cap">0</div></div>
+        <div class="stat"><div class="k">inventory PnL</div>
+          <div class="v" id="s-ipnl">0</div></div>
+        <div class="stat"><div class="k">realised edge / share</div>
+          <div class="v" id="s-edge">—</div></div>
+        <div class="stat"><div class="k">volume taken by informed</div>
+          <div class="v" id="s-tox">—</div></div>
+        <svg id="invchart" viewBox="0 0 300 90" role="img"
+             aria-label="Inventory over time"></svg>
+      </div>
+    </div>
+    <p class="note">A browser port of the same model as <code>src/lob/</code>, not the
+      same code — it exists to make the mechanism visible, and its numbers will
+      wander from run to run. Every measured figure elsewhere on this page comes
+      from the Python benchmark over 12 paired seeds. Push informed flow to 1.0 and
+      watch spread capture fall while volume rises.</p>
+  </div>
+</section>
+
+<!-- ══ the ranking ═══════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>Rank them two ways</h2>
+    <p class="lede">12 paired seeds, 20,000 steps, identical random draws for every
+      strategy. Click a column header to re-rank.</p>
+    <div class="card">
+      <table id="rank">
+        <thead><tr>
+          <th data-k="name">strategy</th>
+          <th data-k="pnl">PnL</th>
+          <th data-k="sd">PnL sd</th>
+          <th data-k="cap">capture</th>
+          <th data-k="inv">inventory PnL</th>
+          <th data-k="isd">inv sd</th>
+          <th data-k="sharpe">Sharpe</th>
+          <th data-k="wins">wins</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="split" style="margin-top:20px">
+      <div class="card win">
+        <p class="note" style="margin:0"><b>Sort by PnL.</b> <code>naive(2)</code>
+        tops the table at 20,853. It also carries an inventory standard deviation of
+        <b>88.1</b> against <code>skew(2)</code>'s <b>12.0</b>, and a PnL spread of
+        ±11,010 against ±3,129. It earns 35% more by taking roughly seven times the
+        position risk.</p>
+      </div>
+      <div class="card">
+        <p class="note" style="margin:0"><b>Sort by Sharpe.</b> The order inverts:
+        <code>skew(2)</code> at <b>5.7</b>, <code>naive(2)</code> at <b>1.3</b>.
+        The decomposition says why — of naive's 20,853, only 16,238 came from
+        quoting. The rest is an unhedged directional bet that happened to pay on
+        these seeds.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ the taker bug ═════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>The maker that was secretly a taker</h2>
+    <p class="lede">Avellaneda–Stoikov at high risk aversion showed −176k PnL on five
+      times the volume of anything else. A market maker should not trade <em>more</em>
+      as it becomes more risk-averse. Counting who was the aggressor on each trade
+      explained it.</p>
+    <div class="split">
+      <div class="card">
+        <svg id="taker" viewBox="0 0 620 250" role="img"
+             aria-label="Share of volume where the market maker was the aggressor, by strategy"></svg>
+      </div>
+      <div class="card warn">
+        <p class="note" style="margin:0 0 12px"><b>72.7% of its volume was taken,
+        not made.</b> The inventory term scales with risk aversion, so a non-zero
+        position pushed one quote clear across the book. A limit order that crosses
+        executes immediately — the strategy was paying the spread and booking the
+        cost as market-making PnL.</p>
+        <p class="note" style="margin:0">Real makers use post-only orders, which
+        exchanges reject or reprice. Adding them moved γ=0.5 from −175,958 to
+        −68,155 — still bad, but now bad for an honest reason. A test asserts zero
+        taken volume for every strategy.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ A-S k ═════════════════════════════════════════════════════════ -->
+<section>
+  <div class="wrap">
+    <h2>Avellaneda–Stoikov is only as good as its <code>k</code></h2>
+    <p class="lede">The published spread is
+      <code>γσ²(T−t) + (2/γ)·ln(1 + γ/k)</code>. <code>k</code> is the decay of fill
+      intensity with distance and has to be calibrated. The market's own spread here
+      is about 5 ticks.</p>
+    <div class="card">
+      <table id="ktbl">
+        <thead><tr><th>γ</th><th>k</th><th>spread term</th><th>quoted</th>
+          <th>PnL</th><th>edge/share</th><th>volume</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note">At <code>k=1.5</code> the model quotes 1.3 ticks into a 5-tick
+      market and loses at every risk aversion. At <code>k=0.3</code> the same model
+      is profitable. The bottom row is also the cleanest demonstration that
+      <b>edge per share is gameable on its own</b>: 20.6 ticks looks superb until
+      you notice it was earned on 404 shares.</p>
+  </div>
+</section>
+
+<footer><div class="wrap">
+  <p><a href="https://github.com/asp53826/lob-market-making">github.com/asp53826/lob-market-making</a>
+   &nbsp;·&nbsp; MIT &nbsp;·&nbsp;
+   <a href="https://github.com/asp53826/lob-market-making/blob/main/DESIGN.md">design notes</a>
+   &nbsp;·&nbsp; <a href="https://github.com/asp53826">more systems</a></p>
+  <p>Tables are measured output from the Python benchmark. The book at the top is a
+     browser port of the same model, included because the mechanism is easier to
+     watch than to read.</p>
+</div></footer>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const NS="http://www.w3.org/2000/svg";
+const el=(t,a,x)=>{const n=document.createElementNS(NS,t);
+  for(const k in a)n.setAttribute(k,a[k]); if(x!=null)n.textContent=x; return n;};
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+/* ── measured: 12 paired seeds × 20,000 steps ─────────────────────── */
+const ROWS=[
+ {name:"naive(2)",  pnl:20853, sd:11010, cap:16238, inv:4615, isd:88.1, sharpe:1.3,  wins:12},
+ {name:"skew(2)",   pnl:15448, sd:3129,  cap:14609, inv:838,  isd:12.0, sharpe:5.7,  wins:12},
+ {name:"A-S(γ=.02)",pnl:5228,  sd:4492,  cap:5316,  inv:-88,  isd:17.2, sharpe:1.6,  wins:10},
+ {name:"skew(5)",   pnl:1211,  sd:2548,  cap:811,   inv:399,  isd:12.5, sharpe:0.7,  wins:8},
+ {name:"naive(5)",  pnl:630,   sd:11410, cap:409,   inv:221,  isd:49.2, sharpe:0.2,  wins:9},
+ {name:"A-S(γ=.1)", pnl:-15830,sd:4668,  cap:-16356,inv:526,  isd:10.0, sharpe:-5.7, wins:0},
+ {name:"A-S(γ=.5)", pnl:-68155,sd:4147,  cap:-68189,inv:35,   isd:7.0,  sharpe:-25.6,wins:0},
+];
+const TAKER=[
+ {n:"naive(2)",  maker:27340, taker:0},
+ {n:"skew(2)",   maker:22720, taker:0},
+ {n:"A-S γ=.02", maker:50705, taker:889},
+ {n:"A-S γ=.1",  maker:51107, taker:13166},
+ {n:"A-S γ=.5",  maker:33009, taker:87860},
+];
+const KTBL=[
+ [0.1,1.5, 1.29, 3.21,-17085,-0.179,54030],
+ [0.1,0.3, 5.75, 6.97,  4017, 0.765,12961],
+ [0.1,0.05,21.97,23.17,  834, 5.507,  553],
+ [0.1,0.01,47.96,49.15, 6150,20.589,  404],
+ [0.5,1.5, 1.15, 5.82,-68447,-1.034,59187],
+ [0.5,0.01,15.73,17.73, -929, 1.144, 1683],
+];
+
+/* ── rank table ────────────────────────────────────────────────────── */
+let sortK="pnl", sortDesc=true;
+function fmt(v,d=0){return v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});}
+function drawRank(){
+  const tb=$("#rank tbody"); tb.textContent="";
+  const rows=[...ROWS].sort((a,b)=> sortK==="name"
+    ? a.name.localeCompare(b.name)
+    : (sortDesc? b[sortK]-a[sortK] : a[sortK]-b[sortK]));
+  for(const r of rows){
+    const tr=document.createElement("tr");
+    if(r.name==="naive(2)"||r.name==="skew(2)") tr.className="hl";
+    const cls=v=>v>0?"good":v<0?"bad":"";
+    tr.innerHTML=`<td>${r.name}</td>`
+      +`<td class="${cls(r.pnl)}">${fmt(r.pnl)}</td>`
+      +`<td>±${fmt(r.sd)}</td>`
+      +`<td class="${cls(r.cap)}">${fmt(r.cap)}</td>`
+      +`<td class="${cls(r.inv)}">${fmt(r.inv)}</td>`
+      +`<td class="${r.isd>40?"bad":r.isd<15?"good":"mid"}">${r.isd.toFixed(1)}</td>`
+      +`<td class="${cls(r.sharpe)}">${r.sharpe.toFixed(1)}</td>`
+      +`<td>${r.wins}/12</td>`;
+    tb.appendChild(tr);
+  }
+}
+document.querySelectorAll("#rank th").forEach(th=>{
+  th.style.cursor="pointer";
+  th.addEventListener("click",()=>{
+    const k=th.dataset.k;
+    if(k===sortK) sortDesc=!sortDesc; else {sortK=k; sortDesc=true;}
+    drawRank();
+  });
+});
+drawRank();
+
+/* ── k table ───────────────────────────────────────────────────────── */
+(function(){
+  const tb=$("#ktbl tbody");
+  for(const [g,k,term,q,pnl,edge,vol] of KTBL){
+    const tr=document.createElement("tr");
+    if(k===0.3) tr.className="hl";
+    tr.innerHTML=`<td>${g}</td><td>${k}</td><td>${term.toFixed(2)}</td>`
+      +`<td>${q.toFixed(2)}</td>`
+      +`<td class="${pnl>0?"good":"bad"}">${fmt(pnl)}</td>`
+      +`<td class="${edge>0?"good":"bad"}">${edge.toFixed(3)}</td>`
+      +`<td class="${vol<1000?"mid":""}">${fmt(vol)}</td>`;
+    tb.appendChild(tr);
+  }
+})();
+
+/* ── taker chart ───────────────────────────────────────────────────── */
+(function(){
+  const s=$("#taker"), W=620,H=250,L=92,R=54,T=26,B=30;
+  const rowH=(H-T-B)/TAKER.length;
+  s.appendChild(el("text",{x:L,y:14,fill:css("--muted"),"font-size":11,
+    "font-family":css("--mono")},"share of the maker's own volume where it was the aggressor"));
+  TAKER.forEach((d,i)=>{
+    const tot=d.maker+d.taker, frac=d.taker/tot;
+    const y=T+i*rowH+rowH*0.22, h=rowH*0.5, w=W-L-R;
+    s.appendChild(el("text",{x:L-10,y:y+h*0.72,"text-anchor":"end",fill:css("--text"),
+      "font-size":12,"font-family":css("--mono")},d.n));
+    s.appendChild(el("rect",{x:L,y,width:w,height:h,rx:4,fill:css("--panel2")}));
+    const bar=el("rect",{x:L,y,width:w*frac,height:h,rx:4,
+      fill:frac>0.5?css("--red"):frac>0.1?css("--amber"):css("--green")});
+    s.appendChild(bar);
+    if(!RM) bar.animate([{width:0},{width:w*frac}],
+      {duration:900,delay:i*90,fill:"backwards",easing:"cubic-bezier(.2,.8,.3,1)"});
+    s.appendChild(el("text",{x:L+w+8,y:y+h*0.72,fill:frac>0.5?css("--red"):css("--muted"),
+      "font-size":12,"font-family":css("--mono"),"font-weight":frac>0.5?"700":"400"},
+      (frac*100).toFixed(1)+"%"));
+  });
+})();
+
+/* ══ live order book ═══════════════════════════════════════════════ */
+const TICKS=14;                       // price levels shown either side
+let sim, running=true, useSkew=true;
+
+function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+  return((t^t>>>14)>>>0)/4294967296;};}
+
+function newSim(){
+  const rnd=mulberry(12345);
+  const gauss=()=>{let u=0,v=0;while(!u)u=rnd();while(!v)v=rnd();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
+  return {
+    rnd,gauss, t:0, fair:10000,
+    lpB:new Map(), lpA:new Map(),      // price -> qty
+    mmBid:null, mmAsk:null, mmQty:10,
+    inv:0, cash:0, capture:0, carry:0,
+    vol:0, toxVol:0, edgeNum:0,
+    invHist:[], flashes:[],
+  };
+}
+function bestOf(m,dir){ let b=null;
+  for(const [p,q] of m) if(q>0 && (b===null || (dir>0 ? p>b : p<b))) b=p;
+  return b; }
+function bestBid(S){const l=bestOf(S.lpB,1);
+  return S.mmBid!==null?(l===null?S.mmBid:Math.max(l,S.mmBid)):l;}
+function bestAsk(S){const l=bestOf(S.lpA,-1);
+  return S.mmAsk!==null?(l===null?S.mmAsk:Math.min(l,S.mmAsk)):l;}
+
+function fill(S,side,price,qty,informed){    // side we traded
+  if(side>0){S.inv+=qty; S.cash-=price*qty;} else {S.inv-=qty; S.cash+=price*qty;}
+  const e=(side>0? S.fair-price : price-S.fair);
+  S.capture+=e*qty; S.edgeNum+=e*qty; S.vol+=qty;
+  if(informed) S.toxVol+=qty;
+  S.flashes.push({price,side,qty,informed,age:0});
+}
+
+function take(S,dir,qty,informed){           // dir +1 buy, -1 sell
+  let left=qty;
+  while(left>0){
+    const bookM = dir>0? S.lpA : S.lpB;
+    const lp = bestOf(bookM, dir>0?-1:1);
+    const mm = dir>0? S.mmAsk : S.mmBid;
+    if(lp===null && mm===null) break;
+    let price, fromMM;
+    if(mm===null) {price=lp; fromMM=false;}
+    else if(lp===null) {price=mm; fromMM=true;}
+    else if(dir>0) {price=Math.min(lp,mm); fromMM = mm<lp ? true : false;}
+    else {price=Math.max(lp,mm); fromMM = mm>lp ? true : false;}
+    // same price: the LP posted first this step, so it has queue priority
+    if(lp!==null && mm!==null && lp===mm) fromMM=false;
+
+    if(fromMM){
+      const avail=S.mmQty, q=Math.min(avail,left);
+      fill(S,-dir,price,q,informed);
+      S.mmQty-=q; left-=q;
+      if(S.mmQty<=0){ if(dir>0) S.mmAsk=null; else S.mmBid=null; S.mmQty=0; }
+    } else {
+      const avail=bookM.get(price)||0, q=Math.min(avail,left);
+      bookM.set(price,avail-q); left-=q;
+      if(avail-q<=0) bookM.delete(price);
+    }
+  }
+}
+
+function step(S,cfg){
+  const before=S.fair;
+  S.fair += S.gauss()*0.6;
+  if(S.rnd()<0.002) S.fair += S.gauss()*25;
+  S.carry += S.inv*(S.fair-before);
+
+  // background liquidity providers: approximately right, slow to update
+  for(const m of [S.lpB,S.lpA]) for(const [p,q] of [...m])
+    if(S.rnd()<0.25) m.delete(p);
+  if(S.rnd()<0.9){
+    const anchor=S.fair+S.gauss()*2;
+    for(let i=0;i<2+Math.floor(S.rnd()*3);i++){
+      const buy=S.rnd()<0.5, off=1+Math.floor(S.rnd()*6);
+      const p=Math.round(buy?anchor-off:anchor+off);
+      const m=buy?S.lpB:S.lpA;
+      m.set(p,(m.get(p)||0)+5+Math.floor(S.rnd()*35));
+    }
+  }
+
+  // market maker requotes: post-only, never crossing
+  const bb=bestOf(S.lpB,1), ba=bestOf(S.lpA,-1);
+  const mid = (bb!==null&&ba!==null)? (bb+ba)/2 : S.fair;
+  const r = mid - (useSkew?cfg.skew:0)*S.inv;
+  let bid=Math.floor(r-cfg.hs), ask=Math.ceil(r+cfg.hs);
+  if(ba!==null && bid>=ba) bid=ba-1;
+  if(bb!==null && ask<=bb) ask=bb+1;
+  if(bid>=ask) ask=bid+1;
+  S.mmBid=bid; S.mmAsk=ask; S.mmQty=10;
+
+  // noise flow, then informed flow
+  if(S.rnd()<0.55) take(S, S.rnd()<0.5?1:-1, 1+Math.floor(S.rnd()*12), false);
+  if(S.rnd()<cfg.inf){
+    const a=bestAsk(S), b=bestBid(S), q=1+Math.floor(S.rnd()*15);
+    if(a!==null && a<S.fair-1) take(S,1,q,true);
+    else if(b!==null && b>S.fair+1) take(S,-1,q,true);
+  }
+
+  S.t++;
+  S.invHist.push(S.inv); if(S.invHist.length>240) S.invHist.shift();
+  S.flashes=S.flashes.filter(f=>++f.age<14);
+}
+
+function drawBook(S){
+  const s=$("#book"); s.textContent="";
+  const W=660,H=330,L=64,R=170,T=18,B=22;
+  const mid=Math.round(S.fair);
+  const lo=mid-TICKS, hi=mid+TICKS;
+  const rowH=(H-T-B)/(TICKS*2+1);
+  const Y=p=>T+(hi-p)*rowH;
+  const maxQ=Math.max(40,...[...S.lpB.values()],...[...S.lpA.values()]);
+  const w=W-L-R;
+
+  for(let p=lo;p<=hi;p++){
+    const y=Y(p);
+    if(p%5===0){
+      s.appendChild(el("text",{x:L-8,y:y+rowH*0.78,"text-anchor":"end",
+        fill:css("--muted"),"font-size":10,"font-family":css("--mono")},p));
+    }
+    // bids and asks are tinted apart so the ladder reads as a book rather
+    // than one undifferentiated column of grey
+    const qb=S.lpB.get(p)||0, qa=S.lpA.get(p)||0;
+    if(qb) s.appendChild(el("rect",{x:L,y:y+1,width:Math.max(2,w*qb/maxQ*0.55),
+      height:rowH-2,rx:2,fill:css("--green"),opacity:.26}));
+    if(qa) s.appendChild(el("rect",{x:L,y:y+1,width:Math.max(2,w*qa/maxQ*0.55),
+      height:rowH-2,rx:2,fill:css("--red"),opacity:.26}));
+    if(S.mmBid===p) s.appendChild(el("rect",{x:L,y:y+1,width:w*0.34,height:rowH-2,
+      rx:2,fill:css("--cyan"),opacity:.85}));
+    if(S.mmAsk===p) s.appendChild(el("rect",{x:L,y:y+1,width:w*0.34,height:rowH-2,
+      rx:2,fill:css("--cyan"),opacity:.85}));
+  }
+  // fair value
+  const yf=Y(S.fair);
+  s.appendChild(el("line",{x1:L-6,y1:yf,x2:L+w+8,y2:yf,stroke:css("--amber"),
+    "stroke-width":1.6,"stroke-dasharray":"6 4"}));
+  s.appendChild(el("text",{x:L+w+12,y:yf+4,fill:css("--amber"),"font-size":11,
+    "font-family":css("--mono")},"fair "+S.fair.toFixed(1)));
+
+  if(S.mmBid!==null) s.appendChild(el("text",{x:L+w+12,y:Y(S.mmBid)+rowH*0.8,
+    fill:css("--cyan"),"font-size":11,"font-family":css("--mono")},"MM bid "+S.mmBid));
+  if(S.mmAsk!==null) s.appendChild(el("text",{x:L+w+12,y:Y(S.mmAsk)+rowH*0.8,
+    fill:css("--cyan"),"font-size":11,"font-family":css("--mono")},"MM ask "+S.mmAsk));
+
+  for(const f of S.flashes){
+    if(f.price<lo||f.price>hi) continue;
+    const o=1-f.age/14;
+    s.appendChild(el("rect",{x:L,y:Y(f.price)+1,width:w*0.34,height:rowH-2,rx:2,
+      fill:f.informed?css("--red"):css("--cyan"),opacity:o}));
+    if(f.age<4) s.appendChild(el("text",{x:L+w*0.36,y:Y(f.price)+rowH*0.8,
+      fill:f.informed?css("--red"):css("--cyan"),"font-size":10.5,
+      "font-family":css("--mono")}, (f.informed?"informed ":"noise ")+f.qty));
+  }
+  s.appendChild(el("text",{x:L,y:H-6,fill:css("--muted"),"font-size":10.5,
+    "font-family":css("--mono")},"depth: green bids / red asks (other LPs)   ·   cyan = this maker\u0027s quotes   ·   bright flash = a fill"));
+}
+
+function drawInv(S){
+  const s=$("#invchart"); s.textContent="";
+  const W=300,H=90,P=6;
+  const h=S.invHist; if(h.length<2) return;
+  const m=Math.max(20,...h.map(Math.abs));
+  const X=i=>P+(W-2*P)*i/(h.length-1), Y=v=>H/2-(H/2-P)*v/m;
+  s.appendChild(el("line",{x1:P,y1:H/2,x2:W-P,y2:H/2,stroke:css("--line")}));
+  let d=""; h.forEach((v,i)=>d+=(i?"L":"M")+X(i)+" "+Y(v));
+  s.appendChild(el("path",{d,fill:"none",stroke:css("--cyan"),"stroke-width":1.6}));
+  s.appendChild(el("text",{x:P,y:11,fill:css("--muted"),"font-size":10,
+    "font-family":css("--mono")},"inventory  ±"+Math.round(m)));
+}
+
+function sync(S){
+  const pnl=S.cash+S.inv*S.fair;
+  $("#s-inv").textContent=S.inv;
+  $("#s-inv").className="v "+(Math.abs(S.inv)>120?"bad":Math.abs(S.inv)>50?"mid":"good");
+  $("#s-pnl").textContent=Math.round(pnl).toLocaleString();
+  $("#s-pnl").className="v "+(pnl>0?"good":"bad");
+  $("#s-cap").textContent=Math.round(S.capture).toLocaleString();
+  $("#s-ipnl").textContent=Math.round(S.carry).toLocaleString();
+  $("#s-ipnl").className="v "+(S.carry>0?"good":"bad");
+  $("#s-edge").textContent=S.vol?(S.edgeNum/S.vol).toFixed(3):"—";
+  $("#s-edge").className="v "+(S.vol&&S.edgeNum/S.vol>0?"good":"bad");
+  $("#s-tox").textContent=S.vol?((S.toxVol/S.vol)*100).toFixed(1)+"%":"—";
+  $("#s-tox").className="v "+(S.vol&&S.toxVol/S.vol>0.10?"bad":"mid");
+}
+
+function cfg(){return {hs:+$("#hs").value, skew:+$("#sk").value, inf:+$("#inf").value};}
+function resetSim(){ sim=newSim(); drawBook(sim); drawInv(sim); sync(sim); }
+resetSim();
+
+let acc=0;
+function frame(){
+  if(running){
+    const c=cfg();
+    for(let i=0;i<3;i++) step(sim,c);
+    if(++acc%2===0){ drawBook(sim); drawInv(sim); sync(sim); }
+  }
+  requestAnimationFrame(frame);
+}
+if(!RM) requestAnimationFrame(frame);
+else { for(let i=0;i<600;i++) step(sim,cfg()); drawBook(sim); drawInv(sim); sync(sim); }
+
+$("#hs").addEventListener("input",()=>$("#hsv").textContent=$("#hs").value);
+$("#sk").addEventListener("input",()=>$("#skv").textContent=(+$("#sk").value).toFixed(3));
+$("#inf").addEventListener("input",()=>$("#infv").textContent=(+$("#inf").value).toFixed(2));
+$("#play").addEventListener("click",e=>{running=!running;
+  e.target.textContent=running?"pause":"play"; e.target.setAttribute("aria-pressed",running);});
+$("#reset").addEventListener("click",resetSim);
+$("#naive").addEventListener("click",e=>{useSkew=!useSkew;
+  e.target.textContent=useSkew?"skew off (naive)":"skew on";
+  e.target.setAttribute("aria-pressed",!useSkew); resetSim();});
+</script>
+</body>
+</html>

@@ -7,6 +7,10 @@ measure whether any of them actually earn anything.
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square)
 ![runtime deps](https://img.shields.io/badge/runtime_dependencies-0-2ea44f?style=flat-square)
 
+**→ [Interactive results page](https://asp53826.github.io/lob-market-making/)** —
+a live order book you can watch get picked off, with sliders for spread, inventory
+skew and toxic flow. Every measured table on it comes from the Python benchmark.
+
 > A market-making backtest that shows a profit is the default outcome, not a
 > result. Take away informed traders and quoting is free money; take away
 > post-only orders and the strategy becomes a liquidity taker while still

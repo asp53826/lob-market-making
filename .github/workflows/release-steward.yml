@@ -19,6 +19,6 @@ jobs:
       runtime: python
       runtime-version: "3.12"
       install-command: >-
-        python -m pip install -e '.[dev]'
+        python -m pip install uv && uv sync --all-extras --dev
       verify-command: >-
-        python -m pytest -q
+        uv run pytest -q

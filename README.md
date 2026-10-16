@@ -11,6 +11,17 @@ measure whether any of them actually earn anything.
 a live order book you can watch get picked off, with sliders for spread, inventory
 skew and toxic flow. Every measured table on it comes from the Python benchmark.
 
+**→ [Order Book Royale](https://asp53826.github.io/lob-market-making/royale/)**, a
+multiplayer game on this book. Up to eight traders share one live order book for
+four minutes, starting with $1M each. A margin line rises behind them, and a
+trader who falls below it is closed out. Empty seats go to the strategies in
+`src/lob/strategies.py`, and the informed traders from `src/lob/flow.py` pick
+off stale quotes, players' included. The matching engine is a JavaScript port
+of `src/lob/book.py`, checked in CI against the Python book on 4,000 random
+operations. Each round commits to a hashed seed before the first trade and
+publishes the seed and every order at the bell, so every player's page replays
+the round and checks each result to the cent.
+
 > A market-making backtest that shows a profit is the default outcome, not a
 > result. Take away informed traders and quoting is free money; take away
 > post-only orders and the strategy becomes a liquidity taker while still
@@ -132,6 +143,7 @@ PnL is dominated by seed noise and it flips sign on the same configuration.
 
 ```bash
 make test    # 36 tests, no network
+make royale-check   # the game's JS book against the Python one (needs node)
 make bench   # ~2 min, prints every table above
 ```
 

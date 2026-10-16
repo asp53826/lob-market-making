@@ -20,3 +20,21 @@ jobs:
       - run: uv sync --all-extras --dev
       # fully mocked; CI never touches sec.gov
       - run: uv run pytest -q
+
+  royale:
+    # docs/royale runs a JavaScript port of the book; this keeps it honest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: uv sync --dev
+      - name: golden workload is current with src/lob
+        run: |
+          uv run python tests/js/make_golden.py
+          git diff --exit-code tests/js/golden.json
+      - run: node --test tests/js/*.test.mjs
